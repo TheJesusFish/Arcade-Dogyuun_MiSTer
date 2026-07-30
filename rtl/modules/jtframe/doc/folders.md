@@ -1,0 +1,159 @@
+# Environment variables
+
+Each time you want to work on your project you need to source the file *setprj.sh* from the jtcores folder in your work terminal. By sourcing this file you will get all the expected environment variables, bash functions, etc. that the tool flow needs, such as:
+
+- **JTROOT**, pointing to the folder from where you cloned jtcores
+- **CORES**, points to `$JTROOT/cores`
+- **JTFRAME**, points to `$JTROOT/modules/jtframe`
+- **MODULES**, points to `$JTROOT/modules`
+
+## Folder and File Locations
+
+The cores are compiled using the JTFRAME framework (located in $JTFRAME). It expects a specific folder setup:
+
+Folder   | Path            | Use
+---------|-----------------|-----
+cores    | $JTROOT         | container for each core folder
+foo      | cores           | container for core foo
+hdl      | cores/foo       | HDL and include files for core foo
+ver      | cores/foo       | verification files. A folder for each test bench
+cfg      | cores/foo       | configuration files (macros, RTL generation...)
+doc      | cores/foo       | documentation
+modules  | modules         | container for each git submodule.
+jtframe  | modules/jtframe | JTFRAME repository as a git submodule
+rom      | $JTROOT         | Do not add to git. ROM files used for simulation
+release  | $JTROOT         | Do not add to git. Mock-up release folder for tests outside JTBIN
+
+### JTBIN
+
+A special git repository for binaries is expected to exist for all JTFRAME based cores. The environment variable **JTBIN** should point to it. Many utilities will store files in it when called with the `--git` option.
+
+Files from JTBIN can be transferred to an SD card or to the MiSTer filesystem by using
+
+- jtbin2mr.sh, copies to a JTBIN folder in MiSTer over ssh
+- jtbin2sd.sh, copies to a SD card named MIST or SIDI
+
+These scripts will delete the previous contents of those folders, so a fresh test is possible.
+
+### Macro definition
+
+Macros for each core are defined in `cfg/macros.def`. The syntax is:
+
+* Each line contains a macro definition, with an optional value after `=`
+* A value definition can be concatenated to a previous value by using `+=` instead of `=`
+* Each time a line starts with `[name]`, a section starts that applies only to the FPGA platform called *name*
+* It is possible to include another file by using `include myfile.def`
+* `#` marks a comment
+
+Example:
+
+```text
+include common.def
+
+CPS1
+CORENAME=JTCPS1
+GAMETOP=jtcps1_game
+JTFRAME_CREDITS
+
+CORE_OSD+=;O1,Original filter,Off,On;
+
+[mister]
+# OSD options
+JTFRAME_ADPCM
+JTFRAME_OSD_VOL
+
+JTFRAME_AVATARS
+JTFRAME_CHEAT
+```
+
+Will include the file *common.def*, then define several macros and concatenate more values to those already present in CORE_OSD. Then, only for MiSTer, it will define some extra options
+
+Macros are evaluated with `jtframe cfgstr <corename>`
+
+### Design Source Files - files.yaml
+
+As QIP files are cumbersome and specific to Quartus only, it is possible to bypass them and use a YAML format, like this:
+
+```
+riders:
+  - get:
+    - "jtriders_*.v"
+    - "*.sv"
+    - common.yaml
+aliens:
+  - get:
+    - jtaliens_scroll.v
+    - jt052109.v
+    - jt051962.v
+jtframe:
+  - get:
+    - jtframe_edge.v
+    - jtframe_counter.v
+  - from: video
+    get:
+      - jtframe_vtimer.v
+      - jtframe_obj.yaml
+      - jtframe_linebuf.v
+      - jtframe_linebuf_gate.v
+  - from: video/tilemap
+    get:
+      - jtframe_tilemap.v
+  - from: cpu
+    unless: [NOMAIN]
+    get:
+      - jtframe_m68k.yaml
+jt51:
+jt053260:
+jteeprom:
+  - get:
+    - jt5911.sv
+```
+
+The first keyword from each block should refer to a folder in either `$CORES` (i.e. `riders`, `aliens`...) or `$MODULES` (i.e. `jtframe`, `jt51`...). Using the `get` key will gather all referenced files from inside the `hdl` folder inside said core or module, along with the `from` key you can reference subfolders from within `hdl`. For instance:
+```
+jframe:
+  - from: video/tilemap
+    get:
+      - jtframe_tilemap.v
+```
+will get the file `$MODULES/jtframe/hdl/video/tilemap/jtframe_tilemap.v`
+
+Further options that can be combined with `get` or `from | get` are `unless` and `when`. After these keys, you can mention a macro list in square brackets: `[ MACRO1, MACRO2 ]`.
+If using `when`, the files will be gathered only if any of these macros is defined. `unless` works the other way: files are always gathered except when none of these macros is defined.
+
+To gather several files with similar names or the same extension, you can use `get` with a string using an asterisk in the changing section. For example:
+
+```
+riders:
+  - get:
+    - "jtriders_*.v"
+    - "*.sv"
+```
+will look in the folder `$CORES/riders/hdl/`, bringing all files with the extension `.sv` and all files with the extension `.v` with a name starting with `jtriders_`.
+
+Alternatively to this method, in the first example, we can also reference a `$CORE` or `$MODULES` folder without giving any specific inputs, to bring all files referenced in their own `cfg/files.yaml`.
+
+Files from the key `jtframe` are based in folder `$JTFRAME/hdl`.  
+Each top-level YAML key is resolved as a folder inside `$CORES` or `$MODULES`.
+
+It is also possible to reference a `target`, but unless you are creating a new target for JTFRAME, you should not do it. Games cores should not directly reference files in the JTFRAME/target folder. An example of the `target:` section can be seen in [mist](../target/mist/common.yaml).
+
+The utility `jtframe files` translates YAML files to:
+
+- `files.qip` for synthesis
+- `game.f` and `jtsim_vhdl.f` for simulation
+
+The compilation script [jtcore](../bin/jtcore) calls `jtframe files`.
+To generate simulation files call:
+
+`jtframe files sim corename --target mister`
+
+from the folder where you want `game.f` and `jtsim_vhdl.f` to be produced.
+
+### Other Configuration Files
+
+The game memory interface can be described in the file mem.yaml, described [here](sdram.md). Using a *mem.yaml* file will generate all the RTL for the SDRAM controller automatically.
+
+The generation of MRA files from MAME's database is done by defining the translation in *cfg/mame2mra.toml* and using `jtframe mra <corename>`. By default this reads `$JTROOT/doc/mame.xml`. This also generates Pocket files when Pocket support is available.
+
+The pause screen message is defined in the *cfg/msg* file.
