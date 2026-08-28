@@ -91,6 +91,9 @@ localparam CONF_STR = {
     "R[44],Save state (Alt-F1);",
     "R[45],Restore state (F1);",
     "-;",
+    "O[69],Autosave NVRAM,Off,On;",
+    "T[70],Save NVRAM;",
+    "-;",
     "R0,Reset;",
     "I,",
     "Load=DPAD Up|Save=Down|Slot=L+R,",
@@ -279,11 +282,21 @@ wire [ 7:0] raw_paddle_1, raw_paddle_2, raw_paddle_3, raw_paddle_4;
 wire [ 8:0] raw_spinner_1, raw_spinner_2, raw_spinner_3, raw_spinner_4;
 wire [24:0] ps2_mouse;
 
-wire        hps_download, hps_upload, hps_wr, hps_wait, sd_wait;
+wire        hps_download, hps_upload, hps_wr, hps_rd, hps_wait, sd_wait;
 wire [15:0] hps_index;
 wire [26:0] hps_addr;
 wire [ 7:0] hps_dout;
 wire [ 7:0] hps_din;
+wire [ 7:0] framework_hps_din;
+wire [ 7:0] hs_nvram_din;
+wire        hs_nvram_wait;
+wire        hs_dirty;
+wire        hs_active;
+wire        hs_config_selected = hps_index[5:0] == 6'd4;
+wire        hs_nvram_selected = hps_index[5:0] == 6'd2;
+reg         hs_upload_req = 1'b0;
+reg         hs_osd_status_d = 1'b0;
+reg         hs_manual_save_d = 1'b0;
 wire [32:0] timestamp_full;
 wire [31:0] timestamp = timestamp_full[31:0];
 
@@ -438,9 +451,11 @@ hps_io #(
     .ioctl_dout      ( hps_dout        ),
     .ioctl_din       ( hps_din         ),
     .ioctl_index     ( hps_index       ),
-    .ioctl_wait      ( hps_wait | sd_wait ),
+    .ioctl_wait      ( hps_wait | sd_wait | hs_nvram_wait ),
     .ioctl_upload    ( hps_upload      ),
-    .ioctl_rd        (                 ),
+    .ioctl_upload_req( hs_upload_req   ),
+    .ioctl_upload_index(8'h02          ),
+    .ioctl_rd        ( hps_rd          ),
 
     .joystick_0      ( joyusb_1_full   ),
     .joystick_1      ( joyusb_2_full   ),
@@ -474,13 +489,27 @@ hps_io #(
     .EXT_BUS         (                 )
 );
 
+always @(posedge clk_rom) begin
+    hs_osd_status_d <= OSD_STATUS;
+    hs_manual_save_d <= status[70];
+    if (rst) begin
+        hs_upload_req <= 1'b0;
+        hs_osd_status_d <= 1'b0;
+        hs_manual_save_d <= 1'b0;
+    end else begin
+        hs_upload_req <=
+            (status[69] && hs_dirty && OSD_STATUS && !hs_osd_status_d) ||
+            (status[70] && !hs_manual_save_d);
+    end
+end
+
 wire [31:0] ss_joystick =
     joyusb_1_full | joyusb_2_full | joystick3_full | joystick4_full;
 
 savestate_ui #(.INFO_TIMEOUT_BITS(25)) u_savestate_ui (
     .clk            ( clk_rom          ),
     .ps2_key        ( ps2_key          ),
-    .allow_ss       ( !rst && !dwnld_busy && !ss_active ),
+    .allow_ss       ( !rst && !dwnld_busy && !ss_active && !hs_active ),
     .joySS          ( ss_joystick[13]  ),
     .joyRight       ( ss_joystick[0]   ),
     .joyLeft        ( ss_joystick[1]   ),
@@ -827,11 +856,14 @@ assign joystick2 = joyusb_2;
 
         // Let data be dumped via NVRAM interface
         .ioctl_addr ( ioctl_addr    ),
-        .ioctl_din  ( hps_din       )
+        .ioctl_din  ( framework_hps_din )
     );
 `else
-    assign hps_din = ioctl_din;
+    assign framework_hps_din = ioctl_din;
 `endif
+
+assign hps_din = (hs_nvram_selected && hps_upload) ?
+                 hs_nvram_din : framework_hps_din;
 
 `ifdef JTFRAME_SAVEGAME
 wire [31:0] sd_lba;

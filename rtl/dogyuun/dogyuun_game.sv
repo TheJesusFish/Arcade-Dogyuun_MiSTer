@@ -51,6 +51,20 @@ module dogyuun_game #(
     output             dwnld_busy,
     input      [15:0]  data_read,
 
+    input              hs_reset,
+    input              hs_config_download,
+    input              hs_config_wr,
+    input              hs_nvram_download,
+    input              hs_nvram_upload,
+    input              hs_nvram_wr,
+    input              hs_nvram_rd,
+    input      [26:0]  hs_addr,
+    input      [7:0]   hs_dout,
+    output     [7:0]   hs_din,
+    output             hs_wait,
+    output             hs_dirty,
+    output             hs_active,
+
     output     [AW-1:0] ba0_addr,
     output     [AW-1:0] ba1_addr,
     output     [AW-1:0] ba2_addr,
@@ -192,6 +206,7 @@ wire        main_gp_idle;
 wire [23:0] main_cpu_addr;
 wire [15:0] main_cpu_dout;
 wire [15:0] main_cpu_din;
+wire [1:0]  main_wram_we;
 wire        main_irq4;
 wire [12:0] main_gp0_ptr;
 wire [12:0] main_gp1_ptr;
@@ -936,6 +951,57 @@ assign debug_view = dwnld_busy ? loader_last_addr[7:0] :
     {|video_deadline_latched, video_line_ready, video_engine_busy,
      main_irq4, main_v25_reset_n};
 
+wire        hs_hold_request;
+reg         hs_hold_ack = 1'b0;
+wire        hs_ram_owned;
+wire [12:0] hs_ram_addr;
+wire [1:0]  hs_ram_we;
+wire [15:0] hs_ram_data;
+wire [15:0] hs_ram_q;
+// Drain an in-flight 68000 transfer and stop the next phase enable on the
+// idle boundary that acknowledges high-score ownership.
+wire hs_cpu_run = !hs_hold_request ||
+                  (main_cpu_bus_active && !hs_hold_ack);
+
+always @(posedge clk) begin
+    if (rst96 || !hs_hold_request || ss_active)
+        hs_hold_ack <= 1'b0;
+    else if (!main_cpu_bus_active)
+        hs_hold_ack <= 1'b1;
+end
+
+dogyuun_highscore u_highscore (
+    .clk             (clk),
+    .reset           (hs_reset),
+    .cpu_reset       (rst96),
+    .config_download (hs_config_download),
+    .config_wr       (hs_config_wr),
+    .config_addr     (hs_addr),
+    .config_data     (hs_dout),
+    .nvram_download  (hs_nvram_download),
+    .nvram_upload    (hs_nvram_upload),
+    .nvram_wr        (hs_nvram_wr),
+    .nvram_rd        (hs_nvram_rd),
+    .nvram_addr      (hs_addr),
+    .nvram_data      (hs_dout),
+    .nvram_q         (hs_din),
+    .nvram_wait      (hs_wait),
+    .ss_active       (ss_active),
+    .normal_ram_addr (main_cpu_addr[13:1]),
+    .normal_ram_we   (main_wram_we),
+    .normal_ram_data (main_cpu_dout),
+    .hold_request    (hs_hold_request),
+    .hold_ack        (hs_hold_ack),
+    .ram_owned       (hs_ram_owned),
+    .ram_addr        (hs_ram_addr),
+    .ram_we          (hs_ram_we),
+    .ram_data        (hs_ram_data),
+    .ram_q           (hs_ram_q),
+    .dirty           (hs_dirty),
+    .active          (hs_active),
+    .config_valid    ()
+);
+
 dogyuun_inputs u_inputs (
     .joy1_n    (joystick1[6:0]),
     .joy2_n    (joystick2[6:0]),
@@ -972,6 +1038,12 @@ dogyuun_main u_main (
     .v25_reset_n         (main_v25_reset_n),
     .wram_scan_addr      (13'd0),
     .wram_scan_dout      (),
+    .hs_ram_owned        (hs_ram_owned),
+    .hs_ram_addr         (hs_ram_addr),
+    .hs_ram_we           (hs_ram_we),
+    .hs_ram_data         (hs_ram_data),
+    .hs_ram_q            (hs_ram_q),
+    .wram_cpu_we         (main_wram_we),
     .palette_scan_addr   (palette_snapshot_addr),
     .palette_scan_dout   (palette_snapshot_data),
     .gp0_scan_addr       (gp0_snapshot_addr),
@@ -1016,7 +1088,7 @@ dogyuun_main u_main (
     .ss_irq              (ss_irq),
     .ss_override         (ss_override),
     .ss_reset            (ss_reset),
-    .ss_cpu_run          (ss_cpu_run),
+    .ss_cpu_run          (ss_cpu_run && hs_cpu_run),
     .ss_hold             (ss_device_hold),
     .ss_restore_enable   (ss_restore_compatible),
     .ss_restore_commit   (ss_restore_commit),

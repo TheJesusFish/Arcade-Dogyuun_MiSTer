@@ -55,3 +55,17 @@
 /tools/
 /sim/
 /AGENTS.md
+
+# High-score persistence sources and focused verification records.
+!/docs/
+/docs/*
+!/docs/HIGH_SCORE_PERSISTENCE.md
+!/docs/restore-manifest.md
+!/sim/
+/sim/*
+!/sim/highscore/
+/sim/highscore/*
+!/sim/highscore/DogyuunHighScoreManager_tb.sv
+!/sim/highscore/run.ps1
+!/sim/highscore/audit_mras.ps1
+!/sim/highscore/usb1_input.py

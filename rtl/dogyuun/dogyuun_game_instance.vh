@@ -108,6 +108,20 @@ u_game(
     .ioctl_wr    ( ioctl_wr       ),
     .ioctl_ram   ( ioctl_ram      ), `ifdef JTFRAME_IOCTL_RD
     .ioctl_din   ( ioctl_din      ), `endif
+    // Dogyuun-local high-score config and NVRAM streams.
+    .hs_reset           ( rst                                      ),
+    .hs_config_download ( hps_download && hs_config_selected       ),
+    .hs_config_wr       ( hps_wr                                   ),
+    .hs_nvram_download  ( hps_download && hs_nvram_selected        ),
+    .hs_nvram_upload    ( hps_upload && hs_nvram_selected          ),
+    .hs_nvram_wr        ( hps_wr                                   ),
+    .hs_nvram_rd        ( hps_rd                                   ),
+    .hs_addr            ( hps_addr                                 ),
+    .hs_dout            ( hps_dout                                 ),
+    .hs_din             ( hs_nvram_din                             ),
+    .hs_wait            ( hs_nvram_wait                            ),
+    .hs_dirty           ( hs_dirty                                 ),
+    .hs_active          ( hs_active                                ),
     // ROM load
     .ioctl_rom   ( ioctl_rom      ),
     .dwnld_busy  ( dwnld_busy     ),

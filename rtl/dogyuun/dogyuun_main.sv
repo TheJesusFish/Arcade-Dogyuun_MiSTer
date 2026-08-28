@@ -29,6 +29,12 @@ module dogyuun_main #(
 
     input      [12:0]  wram_scan_addr,
     output     [15:0]  wram_scan_dout,
+    input              hs_ram_owned,
+    input      [12:0]  hs_ram_addr,
+    input      [1:0]   hs_ram_we,
+    input      [15:0]  hs_ram_data,
+    output     [15:0]  hs_ram_q,
+    output     [1:0]   wram_cpu_we,
     input      [10:0]  palette_scan_addr,
     output     [15:0]  palette_scan_dout,
     input      [12:0]  gp0_scan_addr,
@@ -423,6 +429,7 @@ wire [1:0] wram_we = {
     ack_now && wram_cs && cpu_write && !cpu_uds_n,
     ack_now && wram_cs && cpu_write && !cpu_lds_n
 };
+assign wram_cpu_we = wram_we;
 wire shared_we = ack_now && shared_cs && cpu_write && !cpu_lds_n;
 wire [1:0] palette_we = {
     ack_now && palette_cs && cpu_write && !cpu_uds_n,
@@ -464,9 +471,9 @@ dogyuun_ss_ram_port #(
 ) u_wram_ss (
     .clk            (clk),
     .restore_enable (ss_restore_enable),
-    .normal_we      (2'b00),
-    .normal_addr    (wram_scan_addr),
-    .normal_data    (16'd0),
+    .normal_we      (hs_ram_owned ? hs_ram_we : 2'b00),
+    .normal_addr    (hs_ram_owned ? hs_ram_addr : wram_scan_addr),
+    .normal_data    (hs_ram_data),
     .ram_we         (ss_wram_we),
     .ram_addr       (ss_wram_addr),
     .ram_data       (ss_wram_data),
@@ -480,6 +487,8 @@ dogyuun_ss_ram_port #(
     .ss_data_out    (ss_wram_data_out),
     .ss_ack         (ss_wram_ack)
 );
+
+assign hs_ram_q = wram_scan_dout;
 
 jtframe_dual_ram16 #(.AW(13)) u_wram (
     .clk0  (clk),
