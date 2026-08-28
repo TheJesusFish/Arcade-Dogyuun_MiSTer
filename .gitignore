@@ -27,7 +27,7 @@
 /rtl/raizingpll.spd
 /build/
 /captures/
-*debug
+/debug/
 
 # ModelSim, Verilator, and simulation output
 /sim/
