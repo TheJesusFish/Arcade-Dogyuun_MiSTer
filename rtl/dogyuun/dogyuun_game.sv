@@ -1130,6 +1130,7 @@ dogyuun_sound u_sound (
     .region              (dipsw[23:16]),
     .ym_enable           (snd_en[0]),
     .oki_enable          (snd_en[1]),
+    .pause               (!dip_pause),
     .shared_addr         (sound_shared_addr),
     .shared_dout         (sound_shared_dout),
     .shared_we           (sound_shared_we),

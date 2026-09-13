@@ -69,3 +69,8 @@
 !/sim/highscore/run.ps1
 !/sim/highscore/audit_mras.ps1
 !/sim/highscore/usb1_input.py
+!/sim/pause/
+/sim/pause/*
+!/sim/pause/DogyuunPauseAudio_tb.sv
+!/sim/pause/run.ps1
+!/sim/pause/audit_mras.ps1
