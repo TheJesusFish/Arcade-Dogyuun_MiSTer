@@ -123,7 +123,7 @@ set_global_assignment -name VERILOG_MACRO "DATE=20260723"
 
 set_global_assignment -name VERILOG_MACRO "SYNTHESIS=1"
 
-set_global_assignment -name SEED 1
+set_global_assignment -name SEED 2
 
 set_global_assignment -name FLOW_ENABLE_RTL_VIEWER OFF
 

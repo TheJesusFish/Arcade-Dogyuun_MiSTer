@@ -89,6 +89,28 @@ set game_rst_reg [get_keepers {emu:emu|jtframe_board:u_board|jtframe_reset:u_res
 set_multicycle_path -setup -from $game_rst_reg 2
 set_multicycle_path -hold  -from $game_rst_reg 1
 
+# The object-line FSM latches scrolls_latched/scroll_flip_latched and the
+# initial old_y in ST_IDLE, and updates old_y only in ST_DESC_PROCESS. The
+# shortest route back to the next ST_DESC_PROCESS is DECIDE->CAPTURE0->WAIT1->
+# CAPTURE1->WAIT2->CAPTURE2->WAIT3->CAPTURE3->PROCESS, nine clocks
+# (dogyuun_gp9001_object_line.sv:448 returns to ST_DESC_CAPTURE0);
+# scrolls_latched/scroll_flip_latched are stable for the whole build pass.
+# Claim two, which all three trivially satisfy.
+# desc_y is deliberately NOT included: ST_DESC_CAPTURE3 writes it and the very
+# next state consumes it, so that path is honestly single-cycle.
+set obj_slow [get_keepers {*|dogyuun_gp9001_object_line:u_gp0_object|old_y[*] \
+    *|dogyuun_gp9001_object_line:u_gp0_object|scrolls_latched[*] \
+    *|dogyuun_gp9001_object_line:u_gp0_object|scroll_flip_latched[*] \
+    *|dogyuun_gp9001_object_line:u_gp1_object|old_y[*] \
+    *|dogyuun_gp9001_object_line:u_gp1_object|scrolls_latched[*] \
+    *|dogyuun_gp9001_object_line:u_gp1_object|scroll_flip_latched[*]}]
+set obj_proc [get_keepers {*|dogyuun_gp9001_object_line:u_gp0_object|process_hits_line* \
+    *|dogyuun_gp9001_object_line:u_gp0_object|process_line_delta[*] \
+    *|dogyuun_gp9001_object_line:u_gp1_object|process_hits_line* \
+    *|dogyuun_gp9001_object_line:u_gp1_object|process_line_delta[*]}]
+set_multicycle_path -setup -from $obj_slow -to $obj_proc 2
+set_multicycle_path -hold  -from $obj_slow -to $obj_proc 1
+
 # JTFrame framework exceptions.
 set_false_path -to [get_keepers {audio_out:audio_out|cl1[*]}]
 set_false_path -to [get_keepers {audio_out:audio_out|cr1[*]}]
