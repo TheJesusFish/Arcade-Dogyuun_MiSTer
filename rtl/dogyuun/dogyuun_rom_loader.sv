@@ -42,15 +42,18 @@ wire [26:0] local_byte_addr = in_program ? ioctl_addr :
     (ioctl_addr < OKI_START) ? ioctl_addr - GP1_START :
                                ioctl_addr - OKI_START;
 wire [21:0] local_word_addr = local_byte_addr[22:1];
-wire local_lane = ~local_byte_addr[0];
 wire can_accept = !prog_we || prog_ack;
+reg pair_valid;
+reg [7:0] pair_even_data;
+reg [1:0] pair_bank;
+reg [AW-1:0] pair_word_addr;
 
 assign prog_rd = 1'b0;
-assign dwnld_busy = ioctl_rom || prog_we;
+assign dwnld_busy = ioctl_rom || prog_we || pair_valid;
 
-// prog_mask is active-low. JTFrame's byte reader maps an even ROM address to
-// the SDRAM low lane, so the first byte of every source pair goes there. This
-// preserves the established program/graphics transform and keeps OKI raw.
+// Pair adjacent source bytes into one unmasked SDRAM write. The low source
+// byte remains in the SDRAM low lane, preserving the established 68000 word
+// swap, graphics layout, and byte order seen by JTFrame's 8-bit OKI reader.
 always @(posedge clk) begin
     accepted <= 1'b0;
     if (rst) begin
@@ -62,9 +65,18 @@ always @(posedge clk) begin
         range_error   <= 1'b0;
         overflow_error <= 1'b0;
         last_addr     <= 27'd0;
+        pair_valid    <= 1'b0;
+        pair_even_data <= 8'd0;
+        pair_bank     <= 2'd0;
+        pair_word_addr <= {AW{1'b0}};
     end else begin
         if (prog_we && prog_ack)
             prog_we <= 1'b0;
+
+        // An interrupted transfer must not leave the game held in reset by a
+        // permanently buffered half-word.
+        if (!ioctl_rom)
+            pair_valid <= 1'b0;
 
         if (ioctl_wr && ioctl_rom) begin
             last_addr <= ioctl_addr;
@@ -74,14 +86,32 @@ always @(posedge clk) begin
                 if (!terminal_sentinel)
                     range_error <= 1'b1;
             end else if (can_accept) begin
-                prog_ba   <= target_bank;
-                // The MRA emits GP lower/upper plane words as adjacent
-                // 32-bit groups, so every SDRAM bank is programmed linearly.
-                prog_addr <= local_word_addr[AW-1:0];
-                prog_data <= {ioctl_dout, ioctl_dout};
-                prog_mask <= local_lane ? 2'b10 : 2'b01;
-                prog_we   <= 1'b1;
-                accepted  <= 1'b1;
+                if (!local_byte_addr[0]) begin
+                    if (pair_valid) begin
+                        overflow_error <= 1'b1;
+                    end else begin
+                        pair_even_data <= ioctl_dout;
+                        pair_bank <= target_bank;
+                        pair_word_addr <= local_word_addr[AW-1:0];
+                        pair_valid <= 1'b1;
+                        accepted <= 1'b1;
+                    end
+                end else if (!pair_valid ||
+                             pair_bank != target_bank ||
+                             pair_word_addr != local_word_addr[AW-1:0]) begin
+                    // Fail visibly on a missing or non-adjacent first byte,
+                    // then release the partial pair so reset cannot stick.
+                    overflow_error <= 1'b1;
+                    pair_valid <= 1'b0;
+                end else begin
+                    prog_ba   <= pair_bank;
+                    prog_addr <= pair_word_addr;
+                    prog_data <= {ioctl_dout, pair_even_data};
+                    prog_mask <= 2'b00;
+                    prog_we   <= 1'b1;
+                    pair_valid <= 1'b0;
+                    accepted  <= 1'b1;
+                end
             end else begin
                 overflow_error <= 1'b1;
             end
