@@ -190,6 +190,7 @@ wire signed [12:0] target_y_signed = $signed({4'b0000, target_y_latched});
 // Dogyuun GP1 has 2^17 sprite elements. MAME forms an 18-bit code and
 // applies modulo total_elements, leaving attribute bit 0 as code bit 16.
 wire [16:0] desc_code_base = {desc_attr[0], desc_code};
+// Stage 1 runs in ST_DESC_CAPTURE3 and reads the descriptor's Y word
 wire signed [11:0] desc_pre_x = wrapped_base(
     desc_position_x, desc_local_flip_x);
 wire signed [11:0] desc_pre_y = wrapped_base(
