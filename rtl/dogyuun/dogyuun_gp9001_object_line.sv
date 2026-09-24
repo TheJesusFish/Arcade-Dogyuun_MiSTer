@@ -58,7 +58,6 @@ reg [7:0] descriptor = 8'd0;
 reg [15:0] desc_attr = 16'd0;
 reg [15:0] desc_code = 16'd0;
 reg [15:0] desc_x = 16'd0;
-reg [15:0] desc_y = 16'd0;
 reg [8:0] old_x = 9'd0;
 reg [8:0] old_y = 9'd0;
 reg [8:0] target_y_latched = 9'd0;
@@ -77,6 +76,17 @@ reg [2:0] pixel = 3'd0;
 reg [2:0] sprite_row = 3'd0;
 reg [15:0] fetch_lo = 16'd0;
 reg [31:0] fetch_pixels = 32'd0;
+
+// Descriptor geometry pipelined out of ST_DESC_CAPTURE3. See the stage-1
+// comment above the combinational block for why this split is transparent.
+reg signed [11:0] stage1_base_x = 12'sd0;
+reg signed [11:0] stage1_base_y = 12'sd0;
+reg signed [12:0] stage1_height = 13'sd0;
+reg [8:0] stage1_position_x = 9'd0;
+reg [8:0] stage1_position_y = 9'd0;
+reg [4:0] stage1_x_chunks = 5'd1;
+reg stage1_effective_flip_y = 1'b0;
+reg stage1_enable = 1'b0;
 
 reg process_hits_line = 1'b0;
 reg [4:0] process_x_chunks = 5'd1;
@@ -174,23 +184,37 @@ wire [15:0] sprite_scroll_x_word = scrolls_latched[111:96];
 wire [15:0] sprite_scroll_y_word = scrolls_latched[127:112];
 wire [8:0] sprite_scroll_x = sprite_scroll_x_word[8:0];
 wire [8:0] sprite_scroll_y = sprite_scroll_y_word[8:0];
-wire [8:0] desc_raw_x = desc_x[15:7];
-wire [8:0] desc_raw_y = desc_y[15:7];
-wire [8:0] desc_position_x = desc_attr[14] ?
-    old_x + desc_raw_x : desc_raw_x - sprite_scroll_x + sprite_x_offset;
-wire [8:0] desc_position_y = desc_attr[14] ?
-    old_y + desc_raw_y : desc_raw_y - sprite_scroll_y + sprite_y_offset;
 wire desc_local_flip_x = desc_attr[12];
 wire desc_local_flip_y = desc_attr[13];
 wire desc_effective_flip_x = desc_local_flip_x ^ global_flip_x;
 wire desc_effective_flip_y = desc_local_flip_y ^ global_flip_y;
-wire [4:0] desc_x_chunks = {1'b0, desc_x[3:0]} + 5'd1;
-wire [4:0] desc_y_chunks = {1'b0, desc_y[3:0]} + 5'd1;
 wire signed [12:0] target_y_signed = $signed({4'b0000, target_y_latched});
 // Dogyuun GP1 has 2^17 sprite elements. MAME forms an 18-bit code and
 // applies modulo total_elements, leaving attribute bit 0 as code bit 16.
 wire [16:0] desc_code_base = {desc_attr[0], desc_code};
+
+// The descriptor geometry used to be one combinational chain evaluated in
+// ST_DESC_PROCESS: position add, wrapped_base, global-flip mirror, line
+// delta, then the height compare. From the last-captured word that is nine
+// logic levels and it did not close at 94.5 MHz. The chain is now split
+// across the existing ST_DESC_CAPTURE3 -> ST_DESC_PROCESS boundary, which
+// costs no extra state because CAPTURE3 previously only latched the Y word.
+//
 // Stage 1 runs in ST_DESC_CAPTURE3 and reads the descriptor's Y word
+// straight off object_data, the cycle it is presented. Every other input is
+// stable by then: desc_attr is latched in ST_DESC_CAPTURE0, desc_x in
+// ST_DESC_CAPTURE2, the latched scroll/flip state holds for the whole build,
+// and old_x/old_y are written only in ST_IDLE and ST_DESC_PROCESS, so they
+// still carry the previous descriptor's value exactly as the fused version
+// observed them.
+wire [8:0] desc_raw_x = desc_x[15:7];
+wire [8:0] desc_raw_y = object_data[15:7];
+wire [8:0] desc_position_x = desc_attr[14] ?
+    old_x + desc_raw_x : desc_raw_x - sprite_scroll_x + sprite_x_offset;
+wire [8:0] desc_position_y = desc_attr[14] ?
+    old_y + desc_raw_y : desc_raw_y - sprite_scroll_y + sprite_y_offset;
+wire [4:0] desc_x_chunks = {1'b0, desc_x[3:0]} + 5'd1;
+wire [4:0] desc_y_chunks = {1'b0, object_data[3:0]} + 5'd1;
 wire signed [11:0] desc_pre_x = wrapped_base(
     desc_position_x, desc_local_flip_x);
 wire signed [11:0] desc_pre_y = wrapped_base(
@@ -199,14 +223,18 @@ wire signed [11:0] desc_base_x = global_flip_x ?
     12'sd320 - desc_pre_x : desc_pre_x;
 wire signed [11:0] desc_base_y = global_flip_y ?
     12'sd240 - desc_pre_y : desc_pre_y;
-wire signed [12:0] desc_base_y_extended = {desc_base_y[11], desc_base_y};
-wire signed [12:0] desc_line_delta = desc_effective_flip_y ?
-    desc_base_y_extended + 13'sd7 - target_y_signed :
-    target_y_signed - desc_base_y_extended;
 wire signed [12:0] desc_height =
     $signed({5'b00000, desc_y_chunks, 3'b000});
-wire desc_hits_line = desc_attr[15] &&
-    (desc_line_delta >= 13'sd0) && (desc_line_delta < desc_height);
+
+// Stage 2 runs in ST_DESC_PROCESS, entered only from ST_DESC_CAPTURE3, so
+// these read the stage-1 registers one cycle after they are written.
+wire signed [12:0] stage1_base_y_extended =
+    {stage1_base_y[11], stage1_base_y};
+wire signed [12:0] stage1_line_delta = stage1_effective_flip_y ?
+    stage1_base_y_extended + 13'sd7 - target_y_signed :
+    target_y_signed - stage1_base_y_extended;
+wire stage1_hits_line = stage1_enable &&
+    (stage1_line_delta >= 13'sd0) && (stage1_line_delta < stage1_height);
 wire [3:0] process_row_chunk = process_line_delta[6:3];
 wire [8:0] process_row_code_offset =
     process_row_chunk * process_x_chunks;
@@ -306,7 +334,6 @@ always @(posedge clk) begin
         desc_attr <= 16'd0;
         desc_code <= 16'd0;
         desc_x <= 16'd0;
-        desc_y <= 16'd0;
         old_x <= 9'd0;
         old_y <= 9'd0;
         target_y_latched <= 9'd0;
@@ -324,6 +351,14 @@ always @(posedge clk) begin
         sprite_row <= 3'd0;
         fetch_lo <= 16'd0;
         fetch_pixels <= 32'd0;
+        stage1_base_x <= 12'sd0;
+        stage1_base_y <= 12'sd0;
+        stage1_height <= 13'sd0;
+        stage1_position_x <= 9'd0;
+        stage1_position_y <= 9'd0;
+        stage1_x_chunks <= 5'd1;
+        stage1_effective_flip_y <= 1'b0;
+        stage1_enable <= 1'b0;
         process_hits_line <= 1'b0;
         process_x_chunks <= 5'd1;
         process_code_base <= 17'd0;
@@ -421,23 +456,34 @@ always @(posedge clk) begin
             end
             ST_DESC_WAIT3: state <= ST_DESC_CAPTURE3;
             ST_DESC_CAPTURE3: begin
-                desc_y <= object_data;
+                // Stage 1 of the geometry pipeline. object_data holds the
+                // descriptor's Y word this cycle; the stage-1 registers below
+                // are the only consumers, so it is never latched whole.
+                stage1_base_x <= desc_base_x;
+                stage1_base_y <= desc_base_y;
+                stage1_height <= desc_height;
+                stage1_position_x <= desc_position_x;
+                stage1_position_y <= desc_position_y;
+                stage1_x_chunks <= desc_x_chunks;
+                stage1_effective_flip_y <= desc_effective_flip_y;
+                stage1_enable <= desc_attr[15];
                 state <= ST_DESC_PROCESS;
             end
 
             ST_DESC_PROCESS: begin
-                if (desc_attr[15]) begin
-                    old_x <= desc_position_x;
-                    old_y <= desc_position_y;
+                // Stage 2: line delta and the height compare only.
+                if (stage1_enable) begin
+                    old_x <= stage1_position_x;
+                    old_y <= stage1_position_y;
                 end
-                process_hits_line <= desc_hits_line;
-                process_x_chunks <= desc_x_chunks;
+                process_hits_line <= stage1_hits_line;
+                process_x_chunks <= stage1_x_chunks;
                 process_code_base <= desc_code_base;
                 process_priority <= desc_attr[11:8];
                 process_color <= desc_attr[7:2];
                 process_effective_flip_x <= desc_effective_flip_x;
-                process_x_base <= desc_base_x;
-                process_line_delta <= desc_line_delta;
+                process_x_base <= stage1_base_x;
+                process_line_delta <= stage1_line_delta;
                 // Object RAM is immutable during a line build. Start the
                 // next descriptor read now so its word 0 is waiting once
                 // this descriptor has been accepted or rejected.
